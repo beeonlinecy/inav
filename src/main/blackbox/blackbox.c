@@ -45,6 +45,7 @@
 #include "drivers/compass/compass.h"
 #include "drivers/sensor.h"
 #include "drivers/time.h"
+#include "drivers/pwm_output.h"
 
 #include "fc/config.h"
 #include "fc/controlrate_profile.h"
@@ -53,6 +54,7 @@
 #include "fc/rc_modes.h"
 #include "fc/runtime_config.h"
 #include "fc/settings.h"
+#include "fc/rc_smoothing.h"
 
 #include "flight/failsafe.h"
 #include "flight/imu.h"
@@ -104,7 +106,9 @@ PG_RESET_TEMPLATE(blackboxConfig_t, blackboxConfig,
     .rate_num = SETTING_BLACKBOX_RATE_NUM_DEFAULT,
     .rate_denom = SETTING_BLACKBOX_RATE_DENOM_DEFAULT,
     .invertedCardDetection = BLACKBOX_INVERTED_CARD_DETECTION,
-    .includeFlags = BLACKBOX_FEATURE_NAV_PID | BLACKBOX_FEATURE_NAV_POS | BLACKBOX_FEATURE_MAG | BLACKBOX_FEATURE_ACC | BLACKBOX_FEATURE_ATTITUDE,
+    .includeFlags = BLACKBOX_FEATURE_NAV_PID | BLACKBOX_FEATURE_NAV_POS |
+        BLACKBOX_FEATURE_MAG | BLACKBOX_FEATURE_ACC | BLACKBOX_FEATURE_ATTITUDE |
+        BLACKBOX_FEATURE_RC_DATA | BLACKBOX_FEATURE_RC_COMMAND | BLACKBOX_FEATURE_MOTORS,
 );
 
 void blackboxIncludeFlagSet(uint32_t mask)
@@ -251,16 +255,16 @@ static const blackboxDeltaFieldDefinition_t blackboxMainFields[] = {
     {"mcSurfaceOut",-1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(SIGNED_VB), CONDITION(MC_NAV)},
 
     /* rcData are encoded together as a group: */
-    {"rcData",      0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), CONDITION(ALWAYS)},
-    {"rcData",      1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), CONDITION(ALWAYS)},
-    {"rcData",      2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), CONDITION(ALWAYS)},
-    {"rcData",      3, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), CONDITION(ALWAYS)},
+    {"rcData",      0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), FLIGHT_LOG_FIELD_CONDITION_RC_DATA},
+    {"rcData",      1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), FLIGHT_LOG_FIELD_CONDITION_RC_DATA},
+    {"rcData",      2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), FLIGHT_LOG_FIELD_CONDITION_RC_DATA},
+    {"rcData",      3, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), FLIGHT_LOG_FIELD_CONDITION_RC_DATA},
     /* rcCommands are encoded together as a group in P-frames: */
-    {"rcCommand",   0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), CONDITION(ALWAYS)},
-    {"rcCommand",   1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), CONDITION(ALWAYS)},
-    {"rcCommand",   2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), CONDITION(ALWAYS)},
+    {"rcCommand",   0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), FLIGHT_LOG_FIELD_CONDITION_RC_COMMAND},
+    {"rcCommand",   1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), FLIGHT_LOG_FIELD_CONDITION_RC_COMMAND},
+    {"rcCommand",   2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_4S16), FLIGHT_LOG_FIELD_CONDITION_RC_COMMAND},
     /* Throttle is always in the range [minthrottle..maxthrottle]: */
-    {"rcCommand",   3, UNSIGNED, .Ipredict = PREDICT(MINTHROTTLE), .Iencode = ENCODING(UNSIGNED_VB), .Ppredict = PREDICT(PREVIOUS),  .Pencode = ENCODING(TAG8_4S16), CONDITION(ALWAYS)},
+    {"rcCommand",   3, UNSIGNED, .Ipredict = PREDICT(MINTHROTTLE), .Iencode = ENCODING(UNSIGNED_VB), .Ppredict = PREDICT(PREVIOUS),  .Pencode = ENCODING(TAG8_4S16), FLIGHT_LOG_FIELD_CONDITION_RC_COMMAND},
 
     {"vbat",       -1, UNSIGNED, .Ipredict = PREDICT(VBATREF), .Iencode = ENCODING(NEG_14BIT),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB), FLIGHT_LOG_FIELD_CONDITION_VBAT},
     {"amperage",   -1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(PREVIOUS),      .Pencode = ENCODING(TAG8_8SVB), FLIGHT_LOG_FIELD_CONDITION_AMPERAGE},
@@ -285,6 +289,24 @@ static const blackboxDeltaFieldDefinition_t blackboxMainFields[] = {
     {"gyroADC",     0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), CONDITION(ALWAYS)},
     {"gyroADC",     1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), CONDITION(ALWAYS)},
     {"gyroADC",     2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), CONDITION(ALWAYS)},
+    
+    {"gyroRaw",     0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_RAW},
+    {"gyroRaw",     1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_RAW},
+    {"gyroRaw",     2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_RAW},
+    
+    {"gyroPeakRoll",    0, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_ROLL},
+    {"gyroPeakRoll",    1, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_ROLL},
+    {"gyroPeakRoll",    2, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_ROLL},
+    
+    {"gyroPeakPitch",    0, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_PITCH},
+    {"gyroPeakPitch",    1, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_PITCH},
+    {"gyroPeakPitch",    2, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_PITCH},
+    
+    {"gyroPeakYaw",    0, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_YAW},
+    {"gyroPeakYaw",    1, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_YAW},
+    {"gyroPeakYaw",    2, UNSIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_YAW},
+    
+
     {"accSmooth",   0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ACC},
     {"accSmooth",   1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ACC},
     {"accSmooth",   2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ACC},
@@ -412,6 +434,7 @@ static const blackboxSimpleFieldDefinition_t blackboxSlowFields[] = {
     {"escRPM",                -1, UNSIGNED, PREDICT(0),             ENCODING(UNSIGNED_VB)},
     {"escTemperature",        -1, SIGNED,   PREDICT(PREVIOUS),      ENCODING(SIGNED_VB)},
 #endif
+    {"rxUpdateRate",          -1, UNSIGNED, PREDICT(PREVIOUS),      ENCODING(UNSIGNED_VB)},
 };
 
 typedef enum BlackboxState {
@@ -456,6 +479,12 @@ typedef struct blackboxMainState_s {
     int16_t rcData[4];
     int16_t rcCommand[4];
     int16_t gyroADC[XYZ_AXIS_COUNT];
+    int16_t gyroRaw[XYZ_AXIS_COUNT];
+
+    int16_t gyroPeaksRoll[DYN_NOTCH_PEAK_COUNT];
+    int16_t gyroPeaksPitch[DYN_NOTCH_PEAK_COUNT];
+    int16_t gyroPeaksYaw[DYN_NOTCH_PEAK_COUNT];
+
     int16_t accADC[XYZ_AXIS_COUNT];
     int16_t attitude[XYZ_AXIS_COUNT];
     int32_t debug[DEBUG32_VALUE_COUNT];
@@ -523,6 +552,7 @@ typedef struct blackboxSlowState_s {
     uint32_t escRPM;
     int8_t escTemperature;
 #endif
+    uint16_t rxUpdateRate;
 } __attribute__((__packed__)) blackboxSlowState_t; // We pack this struct so that padding doesn't interfere with memcmp()
 
 //From rc_controls.c
@@ -546,7 +576,7 @@ static struct {
 } xmitState;
 
 // Cache for FLIGHT_LOG_FIELD_CONDITION_* test results:
-static uint32_t blackboxConditionCache;
+static uint64_t blackboxConditionCache;
 
 STATIC_ASSERT((sizeof(blackboxConditionCache) * 8) >= FLIGHT_LOG_FIELD_CONDITION_LAST, too_many_flight_log_conditions);
 
@@ -594,6 +624,9 @@ static bool testBlackboxConditionUncached(FlightLogFieldCondition condition)
     case FLIGHT_LOG_FIELD_CONDITION_ALWAYS:
         return true;
 
+    case FLIGHT_LOG_FIELD_CONDITION_MOTORS:
+        return blackboxIncludeFlag(BLACKBOX_FEATURE_MOTORS);
+
     case FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_1:
     case FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_2:
     case FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_3:
@@ -602,7 +635,7 @@ static bool testBlackboxConditionUncached(FlightLogFieldCondition condition)
     case FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_6:
     case FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_7:
     case FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_8:
-        return getMotorCount() >= condition - FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_1 + 1;
+        return (getMotorCount() >= condition - FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_1 + 1) && blackboxIncludeFlag(BLACKBOX_FEATURE_MOTORS);
 
     case FLIGHT_LOG_FIELD_CONDITION_SERVOS:
         return isMixerUsingServos();
@@ -648,18 +681,11 @@ static bool testBlackboxConditionUncached(FlightLogFieldCondition condition)
 #endif
 
     case FLIGHT_LOG_FIELD_CONDITION_FIXED_WING_NAV:
-#ifdef USE_NAV
+
         return STATE(FIXED_WING_LEGACY) && blackboxIncludeFlag(BLACKBOX_FEATURE_NAV_PID);
-#else
-        return false;
-#endif
 
     case FLIGHT_LOG_FIELD_CONDITION_MC_NAV:
-#ifdef USE_NAV
         return !STATE(FIXED_WING_LEGACY) && blackboxIncludeFlag(BLACKBOX_FEATURE_NAV_PID);
-#else
-        return false;
-#endif
 
     case FLIGHT_LOG_FIELD_CONDITION_RSSI:
         // Assumes blackboxStart() is called after rxInit(), which should be true since
@@ -684,9 +710,26 @@ static bool testBlackboxConditionUncached(FlightLogFieldCondition condition)
     case FLIGHT_LOG_FIELD_CONDITION_ATTITUDE:
         return blackboxIncludeFlag(BLACKBOX_FEATURE_ATTITUDE);
 
+    case FLIGHT_LOG_FIELD_CONDITION_RC_COMMAND:
+        return blackboxIncludeFlag(BLACKBOX_FEATURE_RC_COMMAND);
+
+    case FLIGHT_LOG_FIELD_CONDITION_RC_DATA:
+        return blackboxIncludeFlag(BLACKBOX_FEATURE_RC_DATA);
+
+    case FLIGHT_LOG_FIELD_CONDITION_GYRO_RAW:
+        return blackboxIncludeFlag(BLACKBOX_FEATURE_GYRO_RAW);
+
+    case FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_ROLL:
+        return blackboxIncludeFlag(BLACKBOX_FEATURE_GYRO_PEAKS_ROLL);
+
+    case FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_PITCH:
+        return blackboxIncludeFlag(BLACKBOX_FEATURE_GYRO_PEAKS_PITCH);
+
+    case FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_YAW:
+        return blackboxIncludeFlag(BLACKBOX_FEATURE_GYRO_PEAKS_YAW);
+
     case FLIGHT_LOG_FIELD_CONDITION_NEVER:
         return false;
-
 
     default:
         return false;
@@ -696,16 +739,20 @@ static bool testBlackboxConditionUncached(FlightLogFieldCondition condition)
 static void blackboxBuildConditionCache(void)
 {
     blackboxConditionCache = 0;
-    for (FlightLogFieldCondition cond = FLIGHT_LOG_FIELD_CONDITION_FIRST; cond <= FLIGHT_LOG_FIELD_CONDITION_LAST; cond++) {
+    for (uint8_t cond = FLIGHT_LOG_FIELD_CONDITION_FIRST; cond <= FLIGHT_LOG_FIELD_CONDITION_LAST; cond++) {
+        
+        const uint64_t position = ((uint64_t)1) << cond;
+
         if (testBlackboxConditionUncached(cond)) {
-            blackboxConditionCache |= 1 << cond;
+            blackboxConditionCache |= position;
         }
     }
 }
 
 static bool testBlackboxCondition(FlightLogFieldCondition condition)
 {
-    return (blackboxConditionCache & (1 << condition)) != 0;
+    const uint64_t position = ((uint64_t)1) << condition;
+    return (blackboxConditionCache & position) != 0;
 }
 
 static void blackboxSetState(BlackboxState newState)
@@ -785,16 +832,20 @@ static void writeIntraframe(void)
     }
 
     // Write raw stick positions
-    blackboxWriteSigned16VBArray(blackboxCurrent->rcData, 4);
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_RC_DATA)) {
+        blackboxWriteSigned16VBArray(blackboxCurrent->rcData, 4);
+    }
 
     // Write roll, pitch and yaw first:
-    blackboxWriteSigned16VBArray(blackboxCurrent->rcCommand, 3);
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_RC_COMMAND)) {
+        blackboxWriteSigned16VBArray(blackboxCurrent->rcCommand, 3);
 
-    /*
-     * Write the throttle separately from the rest of the RC data so we can apply a predictor to it.
-     * Throttle lies in range [minthrottle..maxthrottle]:
-     */
-    blackboxWriteUnsignedVB(blackboxCurrent->rcCommand[THROTTLE] - getThrottleIdleValue());
+        /*
+        * Write the throttle separately from the rest of the RC data so we can apply a predictor to it.
+        * Throttle lies in range [minthrottle..maxthrottle]:
+        */
+        blackboxWriteUnsignedVB(blackboxCurrent->rcCommand[THROTTLE] - getThrottleIdleValue());
+    }
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_VBAT)) {
         /*
@@ -840,7 +891,29 @@ static void writeIntraframe(void)
     }
 
     blackboxWriteSigned16VBArray(blackboxCurrent->gyroADC, XYZ_AXIS_COUNT);
-    
+                     
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_GYRO_RAW)) {
+        blackboxWriteSigned16VBArray(blackboxCurrent->gyroRaw, XYZ_AXIS_COUNT);
+    }
+
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_ROLL)) {
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksRoll[0]);
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksRoll[1]);
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksRoll[2]);
+    }
+
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_PITCH)) {
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksPitch[0]);
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksPitch[1]);
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksPitch[2]);
+    }
+
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_YAW)) {
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksYaw[0]);
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksYaw[1]);
+        blackboxWriteUnsignedVB(blackboxCurrent->gyroPeaksYaw[2]);
+    }
+
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_ACC)) {
         blackboxWriteSigned16VBArray(blackboxCurrent->accADC, XYZ_AXIS_COUNT);
     }
@@ -853,13 +926,15 @@ static void writeIntraframe(void)
         blackboxWriteSignedVBArray(blackboxCurrent->debug, DEBUG32_VALUE_COUNT);
     }
 
-    //Motors can be below minthrottle when disarmed, but that doesn't happen much
-    blackboxWriteUnsignedVB(blackboxCurrent->motor[0] - getThrottleIdleValue());
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_MOTORS)) {
+        //Motors can be below minthrottle when disarmed, but that doesn't happen much
+        blackboxWriteUnsignedVB(blackboxCurrent->motor[0] - getThrottleIdleValue());
 
-    //Motors tend to be similar to each other so use the first motor's value as a predictor of the others
-    const int motorCount = getMotorCount();
-    for (int x = 1; x < motorCount; x++) {
-        blackboxWriteSignedVB(blackboxCurrent->motor[x] - blackboxCurrent->motor[0]);
+        //Motors tend to be similar to each other so use the first motor's value as a predictor of the others
+        const int motorCount = getMotorCount();
+        for (int x = 1; x < motorCount; x++) {
+            blackboxWriteSignedVB(blackboxCurrent->motor[x] - blackboxCurrent->motor[0]);
+        }
     }
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_SERVOS)) {
@@ -1024,18 +1099,22 @@ static void writeInterframe(void)
      */
 
     // rcData
-    for (int x = 0; x < 4; x++) {
-        deltas[x] = blackboxCurrent->rcData[x] - blackboxLast->rcData[x];
-    }
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_RC_DATA)) {
+        for (int x = 0; x < 4; x++) {
+            deltas[x] = blackboxCurrent->rcData[x] - blackboxLast->rcData[x];
+        }
 
-    blackboxWriteTag8_4S16(deltas);
+        blackboxWriteTag8_4S16(deltas);
+    }
 
     // rcCommand
-    for (int x = 0; x < 4; x++) {
-        deltas[x] = blackboxCurrent->rcCommand[x] - blackboxLast->rcCommand[x];
-    }
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_RC_COMMAND)) {
+        for (int x = 0; x < 4; x++) {
+            deltas[x] = blackboxCurrent->rcCommand[x] - blackboxLast->rcCommand[x];
+        }
 
-    blackboxWriteTag8_4S16(deltas);
+        blackboxWriteTag8_4S16(deltas);
+    }
 
     //Check for sensors that are updated periodically (so deltas are normally zero)
     int optionalFieldCount = 0;
@@ -1083,6 +1162,22 @@ static void writeInterframe(void)
     //Since gyros, accs and motors are noisy, base their predictions on the average of the history:
     blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, gyroADC),   XYZ_AXIS_COUNT);
 
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_GYRO_RAW)) {
+        blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, gyroRaw), XYZ_AXIS_COUNT);
+    }
+
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_ROLL)) {
+        blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, gyroPeaksRoll), DYN_NOTCH_PEAK_COUNT);
+    }
+
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_PITCH)) {
+        blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, gyroPeaksPitch), DYN_NOTCH_PEAK_COUNT);
+    }
+
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_GYRO_PEAKS_YAW)) {
+        blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, gyroPeaksYaw), DYN_NOTCH_PEAK_COUNT);
+    }
+
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_ACC)) {
         blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, accADC), XYZ_AXIS_COUNT);
     }
@@ -1090,11 +1185,14 @@ static void writeInterframe(void)
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_ATTITUDE)) {
         blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, attitude), XYZ_AXIS_COUNT);
     }
-    
+
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_DEBUG)) {
         blackboxWriteArrayUsingAveragePredictor32(offsetof(blackboxMainState_t, debug), DEBUG32_VALUE_COUNT);
     }
-    blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, motor),     getMotorCount());
+
+    if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_MOTORS)) {
+        blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, motor),     getMotorCount());
+    }
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_SERVOS)) {
         blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, servo),     MAX_SUPPORTED_SERVOS);
@@ -1189,6 +1287,8 @@ static void writeSlowFrame(void)
     blackboxWriteUnsignedVB(slowHistory.escRPM);
     blackboxWriteSignedVB(slowHistory.escTemperature);
 #endif
+    blackboxWriteUnsignedVB(slowHistory.rxUpdateRate);
+
     blackboxSlowFrameIterationTimer = 0;
 }
 
@@ -1242,10 +1342,12 @@ static void loadSlowState(blackboxSlowState_t *slow)
 #endif
 
 #ifdef USE_ESC_SENSOR
-    escSensorData_t * escSensor = escSensorGetData(); 
+    escSensorData_t * escSensor = escSensorGetData();
     slow->escRPM = escSensor->rpm;
     slow->escTemperature = escSensor->temperature;
 #endif
+
+    slow->rxUpdateRate = getRcUpdateFrequency();
 }
 
 /**
@@ -1444,9 +1546,7 @@ static void loadMainState(timeUs_t currentTimeUs)
 
     blackboxCurrent->time = currentTimeUs;
 
-#ifdef USE_NAV
     const navigationPIDControllers_t *nav_pids = getNavigationPIDControllers();
-#endif
 
     for (int i = 0; i < XYZ_AXIS_COUNT; i++) {
         blackboxCurrent->axisPID_Setpoint[i] = axisPID_Setpoint[i];
@@ -1456,10 +1556,17 @@ static void loadMainState(timeUs_t currentTimeUs)
         blackboxCurrent->axisPID_F[i] = axisPID_F[i];
         blackboxCurrent->gyroADC[i] = lrintf(gyro.gyroADCf[i]);
         blackboxCurrent->accADC[i] = lrintf(acc.accADCf[i] * acc.dev.acc_1G);
+        blackboxCurrent->gyroRaw[i] = lrintf(gyro.gyroRaw[i]);
+
+        for (uint8_t i = 0; i < DYN_NOTCH_PEAK_COUNT ; i++) {
+            blackboxCurrent->gyroPeaksRoll[i] = dynamicGyroNotchState.frequency[FD_ROLL][i];
+            blackboxCurrent->gyroPeaksPitch[i] = dynamicGyroNotchState.frequency[FD_PITCH][i];
+            blackboxCurrent->gyroPeaksYaw[i] = dynamicGyroNotchState.frequency[FD_YAW][i];
+        }
+
 #ifdef USE_MAG
         blackboxCurrent->magADC[i] = mag.magADC[i];
 #endif
-#ifdef USE_NAV
         if (!STATE(FIXED_WING_LEGACY)) {
             // log requested velocity in cm/s
             blackboxCurrent->mcPosAxisP[i] = lrintf(nav_pids->pos[i].output_constrained);
@@ -1471,10 +1578,8 @@ static void loadMainState(timeUs_t currentTimeUs)
             blackboxCurrent->mcVelAxisPID[3][i] = lrintf(nav_pids->vel[i].feedForward);
             blackboxCurrent->mcVelAxisOutput[i] = lrintf(nav_pids->vel[i].output_constrained);
         }
-#endif
     }
 
-#ifdef USE_NAV
     if (STATE(FIXED_WING_LEGACY)) {
 
         // log requested pitch in decidegrees
@@ -1495,7 +1600,6 @@ static void loadMainState(timeUs_t currentTimeUs)
         blackboxCurrent->mcSurfacePID[2] = lrintf(nav_pids->surface.derivative / 10);
         blackboxCurrent->mcSurfacePIDOutput = lrintf(nav_pids->surface.output_constrained / 10);
     }
-#endif
 
     for (int i = 0; i < 4; i++) {
         blackboxCurrent->rcData[i] = rxGetChannelValue(i);
@@ -1523,7 +1627,7 @@ static void loadMainState(timeUs_t currentTimeUs)
 #endif
 
 #ifdef USE_PITOT
-    blackboxCurrent->airSpeed = pitot.airSpeed;
+    blackboxCurrent->airSpeed = getAirspeedEstimate();
 #endif
 
 #ifdef USE_RANGEFINDER
@@ -1705,7 +1809,7 @@ static bool blackboxWriteSysinfo(void)
         BLACKBOX_PRINT_HEADER_LINE("Firmware revision", "INAV %s (%s) %s",  FC_VERSION_STRING, shortGitRevision, targetName);
         BLACKBOX_PRINT_HEADER_LINE("Firmware date", "%s %s",                buildDate, buildTime);
         BLACKBOX_PRINT_HEADER_LINE("Log start datetime", "%s",              blackboxGetStartDateTime(buf));
-        BLACKBOX_PRINT_HEADER_LINE("Craft name", "%s",                      systemConfig()->name);
+        BLACKBOX_PRINT_HEADER_LINE("Craft name", "%s",                      systemConfig()->craftName);
         BLACKBOX_PRINT_HEADER_LINE("P interval", "%u/%u",                   blackboxConfig()->rate_num, blackboxConfig()->rate_denom);
         BLACKBOX_PRINT_HEADER_LINE("minthrottle", "%d",                     getThrottleIdleValue());
         BLACKBOX_PRINT_HEADER_LINE("maxthrottle", "%d",                     motorConfig()->maxthrottle);
@@ -1785,14 +1889,9 @@ static bool blackboxWriteSysinfo(void)
         BLACKBOX_PRINT_HEADER_LINE("gyro_lpf_hz", "%d",                     gyroConfig()->gyro_main_lpf_hz);
         BLACKBOX_PRINT_HEADER_LINE("gyro_lpf_type", "%d",                   gyroConfig()->gyro_main_lpf_type);
 #ifdef USE_DYNAMIC_FILTERS
-        BLACKBOX_PRINT_HEADER_LINE("dynamicGyroNotchRange", "%d",           gyroConfig()->dynamicGyroNotchRange);
         BLACKBOX_PRINT_HEADER_LINE("dynamicGyroNotchQ", "%d",               gyroConfig()->dynamicGyroNotchQ);
         BLACKBOX_PRINT_HEADER_LINE("dynamicGyroNotchMinHz", "%d",           gyroConfig()->dynamicGyroNotchMinHz);
 #endif
-        BLACKBOX_PRINT_HEADER_LINE("gyro_notch_hz", "%d,%d",                gyroConfig()->gyro_notch_hz,
-                                                                            0);
-        BLACKBOX_PRINT_HEADER_LINE("gyro_notch_cutoff", "%d,%d",            gyroConfig()->gyro_notch_cutoff,
-                                                                            1);
         BLACKBOX_PRINT_HEADER_LINE("acc_lpf_hz", "%d",                      accelerometerConfig()->acc_lpf_hz);
         BLACKBOX_PRINT_HEADER_LINE("acc_hardware", "%d",                    accelerometerConfig()->acc_hardware);
 #ifdef USE_BARO
@@ -1805,7 +1904,7 @@ static bool blackboxWriteSysinfo(void)
 #endif
         BLACKBOX_PRINT_HEADER_LINE("serialrx_provider", "%d",               rxConfig()->serialrx_provider);
         BLACKBOX_PRINT_HEADER_LINE("motor_pwm_protocol", "%d",              motorConfig()->motorPwmProtocol);
-        BLACKBOX_PRINT_HEADER_LINE("motor_pwm_rate", "%d",                  motorConfig()->motorPwmRate);
+        BLACKBOX_PRINT_HEADER_LINE("motor_pwm_rate", "%d",                  getEscUpdateFrequency());
         BLACKBOX_PRINT_HEADER_LINE("debug_mode", "%d",                      systemConfig()->debug_mode);
         BLACKBOX_PRINT_HEADER_LINE("features", "%d",                        featureConfig()->enabledFeatures);
         BLACKBOX_PRINT_HEADER_LINE("waypoints", "%d,%d",                    getWaypointCount(),isWaypointListValid());
